@@ -1,0 +1,226 @@
+#include <ncursesw/curses.h>
+#include <unistd.h>
+#include <cmath>
+
+const int WIDTH = 50;
+const int HEIGHT = 20;
+const int DEFAULT_PADDLE_WIDTH = 7;
+const double BALL_SPEED = 0.5;
+
+const int NUM_BLOCKS_Y = 3;
+const int NUM_BLOCKS_X = 49;
+const char REGULAR_BLOCK_CHAR = 'X';
+
+class Block {
+public:
+    explicit Block(bool exists = true) : exists(exists) {}
+    bool exists;
+};
+
+class Paddle {
+public:
+    Paddle(double x = 0, int y = 0, int width = DEFAULT_PADDLE_WIDTH)
+        : x(x), y(y), width(width) {}
+
+    double x;
+    int y;
+    int width;
+};
+
+class Ball {
+public:
+    Ball(double x = 0, double y = 0, double dirX = BALL_SPEED, double dirY = -BALL_SPEED)
+        : x(x), y(y), directionX(dirX), directionY(dirY) {}
+
+    double x;
+    double y;
+    double directionX;
+    double directionY;
+};
+
+class BlockBreakerGame {
+public:
+    BlockBreakerGame();
+    ~BlockBreakerGame();
+    void run();
+
+private:
+    WINDOW* win;
+    WINDOW* scoreWin;
+    Paddle paddle;
+    Ball ball;
+    bool gameLost;
+    int score;
+    int totalBlocks;
+    Block blocks[NUM_BLOCKS_Y][NUM_BLOCKS_X];
+    int currentPaddleWidth;
+
+    void initializeBlocks();
+    void printBlock(int y, int x, char blockChar);
+    void printScore();
+    void updatePaddlePosition(int key);
+    void updateBallPosition();
+    void handleCollision();
+    void checkBlockCollision();
+    void gameOverScreen();
+};
+
+BlockBreakerGame::BlockBreakerGame() {
+    initscr();
+    raw();
+    keypad(stdscr, TRUE);
+    noecho();
+    curs_set(0);
+
+    initializeBlocks();
+
+    win = newwin(HEIGHT, WIDTH, 0, 0);
+    box(win, 0, 0);
+    refresh();
+
+    scoreWin = newwin(6, 30, 5, WIDTH + 2);
+
+    paddle = Paddle(WIDTH / 2.0 - DEFAULT_PADDLE_WIDTH / 2.0, HEIGHT - 2, DEFAULT_PADDLE_WIDTH);
+    ball = Ball(WIDTH / 2.0, HEIGHT / 2.0);
+
+    gameLost = false;
+
+    timeout(0);
+
+    score = 0;
+    totalBlocks = NUM_BLOCKS_Y * NUM_BLOCKS_X;
+
+    currentPaddleWidth = DEFAULT_PADDLE_WIDTH;
+}
+
+BlockBreakerGame::~BlockBreakerGame() {
+    endwin();
+}
+
+void BlockBreakerGame::initializeBlocks() {
+    for (int i = 0; i < NUM_BLOCKS_Y; ++i) {
+        for (int j = 1; j < NUM_BLOCKS_X; ++j) {
+            blocks[i][j] = Block(true);
+        }
+    }
+}
+
+void BlockBreakerGame::printBlock(int y, int x, char blockChar) {
+    mvwprintw(win, y, x, "%c", blockChar);
+}
+
+
+void BlockBreakerGame::printScore() {
+    box(scoreWin, 0, 0);
+    mvwprintw(scoreWin, 1, 1, "Score:");
+    mvwprintw(scoreWin, 2, 1, "%d", score);
+
+    int remainingBlocks = totalBlocks - score;
+    double mapPercentage = (static_cast<double>(remainingBlocks) / totalBlocks) * 100.0;
+    mvwprintw(scoreWin, 3, 1, "Map: %.2f%%", mapPercentage);
+
+    wrefresh(scoreWin);
+}
+
+void BlockBreakerGame::updatePaddlePosition(int key) {
+    switch (key) {
+    case KEY_LEFT:
+        paddle.x = fmax(1.0, paddle.x - 2.0);
+        break;
+    case KEY_RIGHT:
+        paddle.x = fmin(static_cast<double>(WIDTH - currentPaddleWidth - 2), paddle.x + 2.0);
+        break;
+    case 'q':
+        gameLost = true;
+        break;
+    }
+}
+
+void BlockBreakerGame::updateBallPosition() {
+    ball.x += ball.directionX;
+    ball.y += ball.directionY;
+}
+
+void BlockBreakerGame::handleCollision() {
+    if (ball.x <= 1 || ball.x >= WIDTH - 2) {
+        ball.directionX = -ball.directionX;
+    }
+
+    if (ball.y <= 1) {
+        ball.directionY = -ball.directionY;
+    }
+
+    if (ball.y >= paddle.y - 1 && ball.y <= paddle.y && ball.x >= paddle.x && ball.x < paddle.x + currentPaddleWidth) {
+        double relativeIntersectX = (paddle.x + currentPaddleWidth / 2) - ball.x;
+        double normalizedRelativeIntersectionX = relativeIntersectX / (currentPaddleWidth / 2.0);
+        double bounceAngle = normalizedRelativeIntersectionX * (3.14 / 3.0);
+        ball.directionX = BALL_SPEED * sin(bounceAngle);
+        ball.directionY = -BALL_SPEED * cos(bounceAngle);
+    }
+}
+
+void BlockBreakerGame::checkBlockCollision() {
+    for (int i = 0; i < NUM_BLOCKS_Y; ++i) {
+        for (int j = 0; j < NUM_BLOCKS_X; ++j) {
+            if (blocks[i][j].exists && ball.y >= i && ball.y <= i + 1 && ball.x >= j * (WIDTH / NUM_BLOCKS_X) && ball.x < (j + 1) * (WIDTH / NUM_BLOCKS_X)) {
+                ball.directionY = -ball.directionY;
+                blocks[i][j].exists = false;
+                score++;
+            }
+        }
+    }
+}
+
+void BlockBreakerGame::gameOverScreen() {
+    timeout(-1);
+    wclear(win);
+    mvwprintw(win, HEIGHT / 2, WIDTH / 2 - 4, "You lost");
+    mvwprintw(win, HEIGHT / 2 + 1, WIDTH / 2 - 8, "Final Score: %d", score);
+    wrefresh(win);
+    getch();
+}
+
+void BlockBreakerGame::run() {
+    while (!gameLost) {
+        int key = getch();
+        updatePaddlePosition(key);
+
+        wclear(win);
+        box(win, 0, 0);
+
+        for (int i = 0; i < paddle.width; ++i) {
+            mvwprintw(win, paddle.y, static_cast<int>(paddle.x) + i, "=");
+        }
+
+        updateBallPosition();
+        mvwprintw(win, static_cast<int>(ball.y), static_cast<int>(ball.x), "O");
+
+        for (int i = 0; i < NUM_BLOCKS_Y; ++i) {
+            for (int j = 1; j < NUM_BLOCKS_X; ++j) {
+                char blockChar = blocks[i][j].exists ? REGULAR_BLOCK_CHAR : ' ';
+                printBlock(i + 1, j * (WIDTH / NUM_BLOCKS_X), blockChar);
+            }
+        }
+
+        printScore();
+        wrefresh(win);
+
+        handleCollision();
+        checkBlockCollision();
+
+        if (ball.y >= HEIGHT - 2) {
+            gameLost = true;
+        }
+
+        usleep(50000);
+    }
+
+    gameOverScreen();
+}
+
+int main() {
+    BlockBreakerGame game;
+    game.run();
+
+    return 0;
+}
